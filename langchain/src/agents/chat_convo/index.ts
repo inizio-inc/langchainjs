@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { LLMChain } from "../../chains/index.js";
 import { Agent } from "../agent.js";
 import {
@@ -8,9 +9,9 @@ import {
 } from "../../prompts/index.js";
 import { renderTemplate } from "../../prompts/template.js";
 import {
+  FORMAT_TEMPLATE,
   PREFIX,
   SUFFIX,
-  FORMAT_INSTRUCTIONS,
   TEMPLATE_TOOL_RESPONSE,
 } from "./prompt.js";
 import { BaseLanguageModel } from "../../base_language/index.js";
@@ -23,30 +24,10 @@ import {
 } from "../../schema/index.js";
 import { AgentInput } from "../types.js";
 import { Tool } from "../tools/base.js";
-
-export class ChatConversationalAgentOutputParser extends BaseOutputParser {
-  async parse(text: string): Promise<unknown> {
-    let jsonOutput = text.trim();
-    if (jsonOutput.includes("```json")) {
-      jsonOutput = jsonOutput.split("```json")[1].trimStart();
-    }
-    if (jsonOutput.includes("```")) {
-      jsonOutput = jsonOutput.split("```")[0].trimEnd();
-    }
-    if (jsonOutput.startsWith("```")) {
-      jsonOutput = jsonOutput.slice(3).trimStart();
-    }
-    if (jsonOutput.endsWith("```")) {
-      jsonOutput = jsonOutput.slice(0, -3).trimEnd();
-    }
-    const response = JSON.parse(jsonOutput);
-    return { action: response.action, action_input: response.action_input };
-  }
-
-  getFormatInstructions(): string {
-    return FORMAT_INSTRUCTIONS;
-  }
-}
+import {
+  StructuredOutputParser,
+  OutputFixingParser,
+} from "../../output_parsers/index.js";
 
 export type CreatePromptArgs = {
   /** String to put after the list of tools. */
@@ -57,9 +38,14 @@ export type CreatePromptArgs = {
   inputVariables?: string[];
   /** Output parser to use for formatting. */
   outputParser?: BaseOutputParser;
+  /** The name of the tool used to return response. */
+  finishToolName?: string;
 };
 
-export type ChatConversationalAgentInput = AgentInput;
+export interface ChatConversationalAgentInput extends AgentInput {
+  outputParser?: BaseOutputParser;
+  finishToolName?: string;
+}
 
 /**
  * Agent for the MRKL chain.
@@ -68,13 +54,31 @@ export type ChatConversationalAgentInput = AgentInput;
 export class ChatConversationalAgent extends Agent {
   outputParser: BaseOutputParser;
 
-  constructor(
-    input: ChatConversationalAgentInput,
-    outputParser?: BaseOutputParser
-  ) {
+  finished: string;
+
+  constructor(input: ChatConversationalAgentInput) {
     super(input);
+    this.finished = input.finishToolName ?? "finished";
     this.outputParser =
-      outputParser ?? new ChatConversationalAgentOutputParser();
+      input.outputParser ??
+      OutputFixingParser.fromLLM(
+        input.llmChain.llm,
+        StructuredOutputParser.fromZodSchema(
+          z.object({
+            thought: z
+              .string()
+              .describe(
+                `You must think concisely about if you should use ${this.finishToolName()} tool or another and why`
+              ),
+            tool: z
+              .string()
+              .describe(
+                `you MUST provide the name of a tool to use (${this.finishToolName()},${input.allowedTools?.join()})`
+              ),
+            input: z.string().describe("the valid input to the tool"),
+          })
+        )
+      );
   }
 
   _agentType(): string {
@@ -83,15 +87,19 @@ export class ChatConversationalAgent extends Agent {
   }
 
   observationPrefix() {
-    return "Observation: ";
+    return "";
   }
 
   llmPrefix() {
-    return "Thought:";
+    return "";
+  }
+
+  finishToolName(): string {
+    return this.finished;
   }
 
   _stop(): string[] {
-    return ["Observation:"];
+    return [];
   }
 
   static validateTools(tools: Tool[]) {
@@ -109,13 +117,23 @@ export class ChatConversationalAgent extends Agent {
     for (const step of steps) {
       thoughts.push(new AIChatMessage(step.action.log));
       thoughts.push(
-        new HumanChatMessage(
+        new AIChatMessage(
           renderTemplate(TEMPLATE_TOOL_RESPONSE, "f-string", {
             observation: step.observation,
+            toolName: step.action.tool,
           })
         )
       );
     }
+
+    thoughts.push(
+      new HumanChatMessage(
+        renderTemplate(FORMAT_TEMPLATE, "f-string", {
+          format_instructions: this.outputParser.getFormatInstructions(),
+        })
+      )
+    );
+
     return thoughts;
   }
 
@@ -128,21 +146,13 @@ export class ChatConversationalAgent extends Agent {
    * @param args.prefix - String to put before the list of tools.
    */
   static createPrompt(tools: Tool[], args?: CreatePromptArgs) {
-    const {
-      systemMessage = PREFIX,
-      humanMessage = SUFFIX,
-      outputParser = new ChatConversationalAgentOutputParser(),
-    } = args ?? {};
+    const { systemMessage = PREFIX, humanMessage = SUFFIX } = args ?? {};
     const toolStrings = tools
       .map((tool) => `${tool.name}: ${tool.description}`)
       .join("\n");
-    const formatInstructions = renderTemplate(humanMessage, "f-string", {
-      format_instructions: outputParser.getFormatInstructions(),
-    });
-    const toolNames = tools.map((tool) => tool.name).join("\n");
-    const finalPrompt = renderTemplate(formatInstructions, "f-string", {
+    const finalPrompt = renderTemplate(humanMessage, "f-string", {
       tools: toolStrings,
-      tool_names: toolNames,
+      finishToolName: args?.finishToolName,
     });
     const messages = [
       SystemMessagePromptTemplate.fromTemplate(systemMessage),
@@ -156,35 +166,28 @@ export class ChatConversationalAgent extends Agent {
   static fromLLMAndTools(
     llm: BaseLanguageModel,
     tools: Tool[],
-    args?: CreatePromptArgs
+    args: CreatePromptArgs = {
+      finishToolName: "finished",
+    }
   ) {
     ChatConversationalAgent.validateTools(tools);
+
     const prompt = ChatConversationalAgent.createPrompt(tools, args);
     const chain = new LLMChain({ prompt, llm });
-    const { outputParser = new ChatConversationalAgentOutputParser() } =
-      args ?? {};
-    return new ChatConversationalAgent(
-      {
-        llmChain: chain,
-        allowedTools: tools.map((t) => t.name),
-      },
-      outputParser
-    );
+
+    return new ChatConversationalAgent({
+      llmChain: chain,
+      allowedTools: tools.map((t) => t.name),
+      finishToolName: args.finishToolName,
+    });
   }
 
   async extractToolAndInput(
     text: string
   ): Promise<{ tool: string; input: string } | null> {
-    try {
-      const response = (await this.outputParser.parse(text)) as {
-        action: string;
-        action_input: string;
-      };
-      return { tool: response.action, input: response.action_input };
-    } catch {
-      throw new Error(
-        `Unable to parse JSON response from chat agent.\n\n${text}`
-      );
-    }
+    return (await this.outputParser.parse(text)) as {
+      tool: string;
+      input: string;
+    };
   }
 }
