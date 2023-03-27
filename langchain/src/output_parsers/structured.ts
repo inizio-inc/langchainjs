@@ -55,7 +55,7 @@ export class StructuredOutputParser<
   }
 
   getFormatInstructions(): string {
-    return `The output should be a markdown code snippet formatted in the following schema:
+    return `Your ONLY response should be a fenced code block formatted in the following schema:
 
 \`\`\`json
 ${printSchema(this.schema)}
@@ -65,11 +65,17 @@ ${printSchema(this.schema)}
 
   async parse(text: string): Promise<z.infer<T>> {
     try {
-      const json = text.trim().split("```json")[1].split("```")[0].trim();
-      return this.schema.parse(JSON.parse(json));
+      let text2 = text.trim();
+      // not very consistent using syntax highlighting
+      text2 = text2.includes("```json")
+        ? text2.split("```json")[1]
+        : text2.split("```")[1];
+      text2 = text2.split("```")[0].trim();
+
+      return this.schema.parse(JSON.parse(text2));
     } catch (e) {
       throw new OutputParserException(
-        `Failed to parse. Text: ${text}. Error: ${e}`
+        `Failed to parse json: ${text}. Error: ${e}`
       );
     }
   }
