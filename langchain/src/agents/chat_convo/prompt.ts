@@ -6,13 +6,13 @@ Assistant is constantly learning and improving, and its capabilities are constan
 
 Overall, Assistant is a powerful system that can help with a wide range of tasks and provide valuable insights and information on a wide range of topics. Whether you need help with a specific question or just want to have a conversation about a particular topic, Assistant is here to assist.`;
 
-export const FORMAT_TEMPLATE = `Whats the next tool?
+export const FORMAT_TEMPLATE = `Reflect on the the original request and subsequent thought and tool response
 {format_instructions}`;
 
-export const SUFFIX = `You respond to the user ONLY via tool objects. These are the available tool names:
+export const SUFFIX = `Your responses to me will consist solely of valid tool uses. These are the available tools:
 {tools}
-{finishToolName}: The final tool to use when we have an answer. Input is the final response string for the human.
+{finishToolName}: The final tool to use when you have a response to my request. The input MUST be your final response to my request, as I forget all other text.
 
-Respond to this: {{input}}`;
+My request: {{input}}`;
 
-export const TEMPLATE_TOOL_RESPONSE = `{toolName} responds {observation}`;
+export const TEMPLATE_TOOL_RESPONSE = `{toolName} responds "{observation}"`;
