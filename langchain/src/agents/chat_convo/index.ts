@@ -68,7 +68,7 @@ export class ChatConversationalAgent extends Agent {
             thought: z
               .string()
               .describe(
-                `You must think concisely about if you should use ${this.finishToolName()} tool or another and why`
+                `You must think concisely whether the next tool should be ${this.finishToolName()} and why`
               ),
             tool: z
               .string()
@@ -76,7 +76,7 @@ export class ChatConversationalAgent extends Agent {
                 `you MUST provide the name of a tool to use (${this.finishToolName()},${input.allowedTools?.join()})`
               ),
             input: z.string().describe("the valid input to the tool"),
-          })
+          }).describe("Only one object is ever allowed")
         )
       );
   }
