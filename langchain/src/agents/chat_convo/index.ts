@@ -64,19 +64,21 @@ export class ChatConversationalAgent extends Agent {
       OutputFixingParser.fromLLM(
         input.llmChain.llm,
         StructuredOutputParser.fromZodSchema(
-          z.object({
-            thought: z
-              .string()
-              .describe(
-                `You must think concisely whether the next tool should be ${this.finishToolName()} and why`
-              ),
-            tool: z
-              .string()
-              .describe(
-                `you MUST provide the name of a tool to use (${this.finishToolName()},${input.allowedTools?.join()})`
-              ),
-            input: z.string().describe("the valid input to the tool"),
-          }).describe("Only one object is ever allowed")
+          z
+            .object({
+              thought: z
+                .string()
+                .describe(
+                  `You must think concisely whether the next tool should be ${this.finishToolName()} and why`
+                ),
+              tool: z
+                .string()
+                .describe(
+                  `you MUST provide the name of a tool to use (${this.finishToolName()},${input.allowedTools?.join()})`
+                ),
+              input: z.string().describe("the valid input to the tool"),
+            })
+            .describe("Only one object is ever allowed")
         )
       );
   }
